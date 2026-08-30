@@ -36,6 +36,14 @@ export async function instanceExistsGuard(req: Request, _: Response, next: NextF
     throw new NotFoundException(`The "${param.instanceName}" instance does not exist`);
   }
 
+  // Hydrate the in-memory instance before the route handlers run: they all read
+  // `waMonitor.waInstances[instanceName]` synchronously, and that map is empty
+  // on a cold start under a serverless runtime. This guard fronts every
+  // instance-scoped router, so doing it here covers all of them.
+  if (!waMonitor.waInstances[param.instanceName]) {
+    await waMonitor.getInstance(param.instanceName);
+  }
+
   next();
 }
 

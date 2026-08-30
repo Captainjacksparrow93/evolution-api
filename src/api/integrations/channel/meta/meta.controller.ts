@@ -36,33 +36,38 @@ export class MetaController extends ChannelController implements ChannelControll
         return;
       }
 
-      data.entry?.forEach(async (entry: any) => {
-        const numberId = entry.changes[0].value.metadata.phone_number_id;
+      // Awaited on purpose: an unawaited async callback lets this handler
+      // return before the entries are processed, and a serverless runtime
+      // freezes the invocation the moment the response is sent — dropping the
+      // message writes and outbound webhooks still in flight.
+      await Promise.all(
+        (data.entry ?? []).map(async (entry: any) => {
+          const numberId = entry.changes[0].value.metadata.phone_number_id;
 
-        if (!numberId) {
-          this.logger.error('WebhookService -> receiveWebhookMeta -> numberId not found');
-          return {
-            status: 'success',
-          };
-        }
+          if (!numberId) {
+            this.logger.error('WebhookService -> receiveWebhookMeta -> numberId not found');
+            return;
+          }
 
-        const instance = await this.prismaRepository.instance.findFirst({
-          where: { number: numberId },
-        });
+          const instance = await this.prismaRepository.instance.findFirst({
+            where: { number: numberId },
+          });
 
-        if (!instance) {
-          this.logger.error('WebhookService -> receiveWebhookMeta -> instance not found');
-          return {
-            status: 'success',
-          };
-        }
+          if (!instance) {
+            this.logger.error('WebhookService -> receiveWebhookMeta -> instance not found');
+            return;
+          }
 
-        await this.waMonitor.waInstances[instance.name].connectToWhatsapp(data);
+          const waInstance = await this.waMonitor.getInstance(instance.name);
 
-        return {
-          status: 'success',
-        };
-      });
+          if (!waInstance) {
+            this.logger.error(`WebhookService -> receiveWebhookMeta -> could not load instance "${instance.name}"`);
+            return;
+          }
+
+          await waInstance.connectToWhatsapp(data);
+        }),
+      );
     }
 
     return {

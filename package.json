@@ -6,6 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "build": "tsc --noEmit && tsup",
+    "build:vercel": "BUILD_TARGET=serverless prisma generate --schema ./prisma/postgresql-schema.prisma && BUILD_TARGET=serverless tsup",
     "start": "tsx ./src/main.ts",
     "start:prod": "node dist/main",
     "dev:server": "tsx watch ./src/main.ts",
