@@ -6,6 +6,9 @@
 
 generator client {
   provider = "prisma-client-js"
+  // "rhel-openssl-3.0.x" is the engine for serverless Node runtimes on
+  // Amazon Linux 2023 (Vercel Functions, AWS Lambda).
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {

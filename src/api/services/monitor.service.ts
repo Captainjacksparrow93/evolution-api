@@ -84,8 +84,18 @@ export class WAMonitoringService {
   }
 
   public async instanceInfo(instanceNames?: string[]): Promise<any> {
+    const clientName = this.configService.get<Database>('DATABASE').CONNECTION.CLIENT_NAME;
+
     if (instanceNames && instanceNames.length > 0) {
-      const inexistentInstances = instanceNames ? instanceNames.filter((instance) => !this.waInstances[instance]) : [];
+      // The in-memory map only holds instances this process has already
+      // touched, so existence has to be settled against the database — under a
+      // serverless runtime the map is empty on every cold start.
+      const knownInstances = await this.prismaRepository.instance.findMany({
+        where: { name: { in: instanceNames }, clientName },
+        select: { name: true },
+      });
+      const knownNames = new Set(knownInstances.map((instance) => instance.name));
+      const inexistentInstances = instanceNames.filter((instance) => !knownNames.has(instance));
 
       if (inexistentInstances.length > 0) {
         throw new NotFoundException(
@@ -93,8 +103,6 @@ export class WAMonitoringService {
         );
       }
     }
-
-    const clientName = this.configService.get<Database>('DATABASE').CONNECTION.CLIENT_NAME;
 
     const where =
       instanceNames && instanceNames.length > 0
@@ -270,7 +278,52 @@ export class WAMonitoringService {
     }
   }
 
-  private async setInstance(instanceData: InstanceDto) {
+  /**
+   * Resolves an instance, loading it from the database if this process has not
+   * seen it yet.
+   *
+   * `waInstances` only lives as long as the process. A long-lived server fills
+   * it once via `loadInstance()` at boot, but a serverless runtime starts with
+   * an empty map on every cold start, so callers must go through here rather
+   * than indexing `waInstances` directly.
+   *
+   * Returns undefined when no such instance exists.
+   */
+  public async getInstance(instanceName: string) {
+    if (this.waInstances[instanceName]) {
+      return this.waInstances[instanceName];
+    }
+
+    const clientName = this.configService.get<Database>('DATABASE').CONNECTION.CLIENT_NAME;
+
+    const instance = await this.prismaRepository.instance.findFirst({
+      where: { name: instanceName, clientName },
+    });
+
+    if (!instance) {
+      return undefined;
+    }
+
+    await this.setInstance({
+      instanceId: instance.id,
+      instanceName: instance.name,
+      integration: instance.integration,
+      token: instance.token,
+      number: instance.number,
+      businessId: instance.businessId,
+      ownerJid: instance.ownerJid,
+      // Deliberately not the stored status: `setInstance` auto-connects on
+      // 'open'/'connecting', and opening a WhatsApp socket during a request is
+      // never right here. For the Meta channel `connectToWhatsapp()` is a no-op
+      // without a payload; for Baileys it would open a socket that cannot
+      // outlive the invocation.
+      connectionStatus: 'close',
+    });
+
+    return this.waInstances[instanceName];
+  }
+
+  public async setInstance(instanceData: InstanceDto) {
     const instance = channelController.init(instanceData, {
       configService: this.configService,
       eventEmitter: this.eventEmitter,
